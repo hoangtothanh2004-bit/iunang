@@ -1,0 +1,25 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: "Times New Roman", Georgia, serif;
+}
+
+#rain, #particles {
+  position: fixed;
+  inset: 0;
+  display: block;
+  pointer-events: none;
+}
+
+#rain { 
+  z-index: 0; 
+  opacity: 0.35; 
+}
+
+#particles { 
+  z-index: 1; 
+}
