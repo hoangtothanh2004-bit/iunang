@@ -1,234 +1,285 @@
-// script.js - VERSION CORRIGÉE (UTF-8)
+// script.js – Pink theme + chữ nét hồng + nền sáng hơn
+// Nhịp tim CHẬM & NHẸ (đã giảm BPM, biên độ & scale)
+
 (() => {
-  // ======================= CƠ BẢN =======================
   const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
   const rain = document.getElementById("rain");
   const prt  = document.getElementById("particles");
   const rctx = rain.getContext("2d");
   const pctx = prt.getContext("2d");
-
   let W = window.innerWidth, H = window.innerHeight;
 
   const cfg = {
-    countMax: 60000,   // TĂNG từ 30000 → 60000 để đủ hạt
-    formTime: 2.0,
-    cycleIndex: 0
+    // ===== Hiệu ứng & chu kỳ =====
+    countMax: 60000,
+    dotSize: 2.6,
+    formTime: 1.9,   // chậm gom vào hình hơn
+    stableTime: 4.0, // giữ cảnh lâu hơn
+    cycleIndex: 0,
+
+    // ===== Lớp chữ nền (mượt, rõ) =====
+    textAssistAlpha: 0.96,
+    textStrokeScale: 0.06,   // 6% size font
+    textAppearDur: 0.9,      // 0.6–1.2s
+    textAppearStyle: "wipe", // "wipe" | "fade" | "scale"
+    textAppearFrom: "left",
+    textAppearMaxBlur: 2.0,
+
+    // ===== Nhịp tim (CHẬM & NHẸ) =====
+    heartBpm: 56,
+    textBpm: 56,
+    heartPulseAmp: 1.4,
+    textPulseAmp: 0.7,
+    heartScale: 0.010,
+    textScale: 0.004,
+
+    // ===== Màu sắc (Pink theme) =====
+    colors: {
+      textFill:   "#ffd6ec",  // hồng nhạt fill
+      textStroke: "#ff5aa5",  // viền hồng tươi
+      particle:       "#ff5aa5",                // hạt hồng
+      particleGlow:   3,                        // 0 tắt glow, 2–4 đẹp
+      rainHueMin: 322,  // hồng
+      rainHueMax: 344   // hồng ngả tím
+    }
   };
 
-  // ======================= MƯA LOVE (khai báo trước) =======================
-  const glyphs = ["L", "O", "V", "E"];
-  const colWidth = 20;
-  let columns = 0;
-
+  // ================= LOVE Rain (nền) =================
+  const glyphs = ["L","O","V","E"];
+  const colStep = 22;
   class RainCol {
-    constructor(x) { this.x = x; this.reset(); }
-    reset() {
-      this.y = -Math.random() * H;
-      this.speed = 120 + Math.random() * 150;
-      this.hue = 280 + Math.random() * 60;
-      this.alpha = 0.4 + Math.random() * 0.6;
-      this.len = 6 + Math.floor(Math.random() * 10);
+    constructor(x){ this.x=x; this.reset(); }
+    reset(){
+      this.y = -Math.random()*H;
+      this.speed = 130 + Math.random()*160;
+      const span = cfg.colors.rainHueMax - cfg.colors.rainHueMin;
+      this.hue = cfg.colors.rainHueMin + Math.random()*span;
+      this.alpha = 0.55 + Math.random()*0.35; // sáng hơn bản cũ
+      this.len = 6 + (Math.random()*10|0);
     }
-    step(dt) {
-      this.y += this.speed * dt;
-      if (this.y - this.len * colWidth > H + 60) this.reset();
-    }
-    draw(ctx, t) {
+    step(dt){ this.y += this.speed*dt; if (this.y - this.len*colStep > H+80) this.reset(); }
+    draw(ctx, t){
       ctx.save();
       ctx.translate(this.x, this.y);
       ctx.font = `bold 18px 'Courier New', monospace`;
-      for (let i = 0; i < this.len; i++) {
-        const ch = glyphs[(i + Math.floor(t * 16)) % glyphs.length];
-        const y = -i * colWidth;
-        const a = Math.max(0, this.alpha - i * 0.06);
-        ctx.fillStyle = `hsla(${this.hue}, 95%, ${75 - i * 4}%, ${a})`;
+      for (let i=0;i<this.len;i++){
+        const ch = glyphs[(i + (t*16|0)) % glyphs.length];
+        const y = -i*colStep;
+        const a = Math.max(0, this.alpha - i*0.06);
+        const L = Math.max(60, 86 - i*3);
+        ctx.fillStyle = `hsla(${this.hue},96%,${L}%,${a})`;
         ctx.fillText(ch, 0, y);
       }
       ctx.restore();
     }
   }
   let rainCols = [];
-  function rebuildRain() {
-    columns = Math.ceil(window.innerWidth / colWidth);
-    rainCols = new Array(columns).fill(0).map((_, i) => new RainCol(i * colWidth + 6));
+  function rebuildRain(){
+    rainCols = [];
+    const n = Math.ceil(W/colStep);
+    for (let i=0;i<n;i++) rainCols.push(new RainCol(i*colStep+8));
   }
 
-  // ======================= HẠT & TRẠNG THÁI =======================
-  const state = { mode: "form", timer: 0, transitionProgress: 0 };
+  // ================= Particles & state =================
+  const state = { mode: "form", timer: 0, textAssist: null };
   let particles = [];
   let targets = [];
   let nextTargets = [];
 
-  // ======================= HÌNH TIM =======================
-  function buildHeart() {
-    const points = [];
-    const scale = Math.min(window.innerWidth, window.innerHeight) / 35;
-
-    for (let t = 0; t < Math.PI * 2; t += 0.006) {
-      const x = 16 * Math.pow(Math.sin(t), 3);
-      const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
-      points.push({ x: window.innerWidth / 2 + x * scale, y: window.innerHeight / 2 - y * scale });
-    }
-
-    const fill = [];
-    for (let layer = 0.12; layer <= 0.92; layer += 0.08) {
-      for (let t = 0; t < Math.PI * 2; t += 0.02) {
-        const x = (16 * Math.pow(Math.sin(t), 3)) * layer;
-        const y = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t)) * layer;
-        fill.push({ x: window.innerWidth/2 + x*scale, y: window.innerHeight/2 - y*scale });
-      }
-    }
-
-    const attempts = 1200;
-    for (let i = 0; i < attempts; i++) {
-      const rx = (Math.random() - 0.5) * 18 * scale;
-      const ry = (Math.random() - 0.5) * 16 * scale;
-      const nx = rx / scale, ny = ry / scale;
-      const eq = Math.pow(nx*nx + ny*ny - 1, 3) - nx*nx*Math.pow(ny, 3);
-      if (eq <= 0.12) fill.push({ x: window.innerWidth/2 + rx, y: window.innerHeight/2 - ry });
-    }
-
-    const all = points.concat(fill);
-    for (let i = all.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [all[i], all[j]] = [all[j], all[i]]; }
-    return all.slice(0, Math.min(all.length, cfg.countMax));
+  function makeParticle(){
+    return { x:Math.random()*W, y:Math.random()*H, startX:0, startY:0, targetX:0, targetY:0 };
+  }
+  function scatter(reset=false){
+    const need = targets.length - particles.length;
+    for (let i=0;i<need;i++) particles.push(makeParticle());
+    if (particles.length > targets.length) particles.length = targets.length;
+    particles.forEach((p,i)=>{
+      if (reset){ p.x=Math.random()*W; p.y=H+Math.random()*100; }
+      p.startX=p.x; p.startY=p.y;
+      const t = targets[i]; if (t){ p.targetX=t.x; p.targetY=t.y; }
+    });
+    state.mode="form"; state.timer=0;
   }
 
-  // ======================= HÀM CHIA DÒNG =======================
-  function splitTextIntoLines(text, maxWidth, ctx) {
+  // ================= Shapes =================
+  function buildHeart(){
+    state.textAssist = null; // tim không vẽ chữ nền
+    const out = [];
+    const s = Math.min(W,H)/35;
+    for (let t=0;t<Math.PI*2;t+=0.006){
+      const x = 16*Math.pow(Math.sin(t),3);
+      const y = 13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t);
+      out.push({x: W/2 + x*s, y: H/2 - y*s});
+    }
+    for (let k=0.12;k<=0.92;k+=0.08){
+      for (let t=0;t<Math.PI*2;t+=0.02){
+        const x = (16*Math.pow(Math.sin(t),3))*k;
+        const y = (13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t))*k;
+        out.push({x: W/2 + x*s, y: H/2 - y*s});
+      }
+    }
+    const tries = 1200;
+    for (let i=0;i<tries;i++){
+      const rx = (Math.random()-0.5)*18*s;
+      const ry = (Math.random()-0.5)*16*s;
+      const nx = rx/s, ny = ry/s;
+      const eq = Math.pow(nx*nx+ny*ny-1,3) - nx*nx*Math.pow(ny,3);
+      if (eq <= 0.12) out.push({x: W/2 + rx, y: H/2 - ry});
+    }
+    shuffle(out);
+    return out.slice(0, Math.min(out.length, cfg.countMax));
+  }
+
+  // ---- helpers (text) ----
+  function splitTextIntoLines(text, maxWidth, ctx){
     const words = text.trim().split(/\s+/);
     const lines = [];
     let cur = words[0] || "";
-    for (let i = 1; i < words.length; i++) {
+    for (let i=1;i<words.length;i++){
       const w = words[i];
-      const width = ctx.measureText(cur + " " + w).width;
-      if (width < maxWidth) cur += " " + w; else { lines.push(cur); cur = w; }
+      if (ctx.measureText(cur+" "+w).width <= maxWidth) cur += " "+w;
+      else { lines.push(cur); cur = w; }
     }
     if (cur) lines.push(cur);
     return lines;
   }
 
-  // ======================= CHỮ NÉT – KHÔNG CỤT NỬA =======================
-  function buildText(txt) {
+  function buildText(txt){
+    // Render chữ nét lên offscreen canvas (hồng)
     const oc = document.createElement("canvas");
     const octx = oc.getContext("2d");
-
     const outerPad = 80;
-    const sf = Math.max(2, Math.round(DPR * 2));
-    const maxW = (window.innerWidth - outerPad * 2) * sf;
+    const sf = Math.max(2, Math.round(DPR*2)); // scale cao -> mép mượt
+    const maxW = (W - outerPad*2) * sf;
 
-    let base = txt.length > 50 ? 80 : txt.length > 30 ? 90 : txt.length > 20 ? 100 : 110;
-    let fs = base * sf;
+    let fs = (txt.length>50?80:txt.length>30?90:txt.length>20?100:110) * sf;
     const family = "'Times New Roman','Georgia',serif";
-
-    let lines, ascent, descent, lineGap, lineHeight, textHeight;
-    while (true) {
+    let lines, ascent, descent, lineGap, lineH, textH, metrics;
+    while (true){
       octx.font = `900 ${fs}px ${family}`;
       lines = splitTextIntoLines(txt, maxW, octx);
-
-      const ms = lines.map(l => octx.measureText(l));
-      ascent  = Math.max(...ms.map(m => m.actualBoundingBoxAscent || fs * 0.8));
-      descent = Math.max(...ms.map(m => m.actualBoundingBoxDescent || fs * 0.25));
-      lineGap = Math.round(fs * 0.20);
-      lineHeight = ascent + descent + lineGap;
-      textHeight = lineHeight * lines.length - lineGap;
-
-      const widest = Math.max(...ms.map(m => m.width), 1);
-      if (widest <= maxW && textHeight <= (window.innerHeight - outerPad * 2) * sf && fs >= 48 * sf) break;
-      fs -= 2 * sf;
-      if (fs <= 48 * sf) break;
+      metrics = lines.map(l => octx.measureText(l));
+      ascent  = Math.max(...metrics.map(m => m.actualBoundingBoxAscent || fs*0.8));
+      descent = Math.max(...metrics.map(m => m.actualBoundingBoxDescent || fs*0.25));
+      lineGap = Math.round(fs*0.18);
+      lineH   = ascent + descent + lineGap;
+      textH   = lineH*lines.length - lineGap;
+      const widest = Math.max(...metrics.map(m => m.width),1);
+      if (widest <= maxW && textH <= (H - outerPad*2)*sf && fs >= 48*sf) break;
+      fs -= 2*sf;
+      if (fs <= 48*sf) break;
     }
 
-    const marginX = Math.ceil(fs * 0.30);
-    const marginY = Math.ceil(fs * 0.55);
+    const marginX = Math.ceil(fs*0.40);
+    const marginY = Math.ceil(fs*0.70);
 
-    oc.width  = Math.ceil(maxW) + marginX * 2;
-    oc.height = Math.ceil(textHeight) + marginY * 2;
+    oc.width  = Math.ceil(maxW) + marginX*2;
+    oc.height = Math.ceil(textH) + marginY*2;
 
-    octx.setTransform(1, 0, 0, 1, 0, 0);
-    octx.clearRect(0, 0, oc.width, oc.height);
-    octx.imageSmoothingEnabled = false;
-
+    octx.setTransform(1,0,0,1,0,0);
+    octx.clearRect(0,0,oc.width,oc.height);
+    octx.imageSmoothingEnabled = true;
     octx.textAlign = "center";
     octx.textBaseline = "alphabetic";
     octx.font = `900 ${fs}px ${family}`;
+
+    // Hồng: fill + stroke
+    octx.fillStyle = cfg.colors.textFill;
+    octx.strokeStyle = cfg.colors.textStroke;
     octx.lineJoin = "round";
     octx.lineCap  = "round";
-    octx.lineWidth = Math.max(2, Math.round(fs * 0.06));
-    octx.strokeStyle = "#ffffff";
-    octx.fillStyle   = "#ffffff";
+    octx.lineWidth = Math.max(2, Math.round(fs*cfg.textStrokeScale));
 
-    const cx = oc.width / 2;
+    const cx = oc.width/2;
     let baselineY = marginY + ascent;
-    for (const line of lines) {
-      octx.strokeText(line, cx, baselineY);
+    for (const line of lines){
       octx.fillText(line,   cx, baselineY);
-      baselineY += lineHeight;
+      octx.strokeText(line, cx, baselineY);
+      baselineY += lineH;
     }
 
-    // Lấy mẫu theo alpha - GIẢM STEP để dày hơn
-    const img = octx.getImageData(0, 0, oc.width, oc.height).data;
-    const pts = [];
-
-    // THAY ĐỔI QUAN TRỌNG: giảm step từ 1.0 → 0.5 để lấy nhiều điểm hơn
-    const step = Math.max(1, Math.round(sf * 0.5));
-
-    const usableW = (oc.width  - marginX * 2) / sf;
-    const usableH = (oc.height - marginY * 2) / sf;
-    const screenLeft = outerPad + (window.innerWidth - outerPad * 2 - usableW) / 2;
-    const screenTop  = (window.innerHeight - usableH) / 2;
-
-    for (let y = 0; y < oc.height; y += step) {
-      for (let x = 0; x < oc.width; x += step) {
-        const a = img[(y * oc.width + x) * 4 + 3];
-        if (a > 32) {
-          const gx = screenLeft + (x - marginX) / sf;
-          const gy = screenTop  + (y - marginY) / sf;
-          pts.push({ x: Math.round(gx), y: Math.round(gy) });
-          if (pts.length >= cfg.countMax) break;
+    // Dynamic sampling để không vượt countMax
+    const img = octx.getImageData(0,0,oc.width,oc.height).data;
+    const predict = (step) => {
+      let hits = 0;
+      for (let y=0;y<oc.height;y+=step){
+        for (let x=0;x<oc.width;x+=step){
+          const a = img[(y*oc.width + x)*4 + 3];
+          if (a>32) hits++;
         }
       }
-      if (pts.length >= cfg.countMax) break;
+      return hits*2;
+    };
+
+    let step = Math.max(1, Math.round(sf*0.6));
+    let estimate = predict(step);
+    let guard = 0;
+    while (estimate > cfg.countMax && guard < 24){
+      step += 1;
+      estimate = predict(step);
+      guard++;
     }
 
-    for (let i = pts.length - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
-      [pts[i], pts[j]] = [pts[j], pts[i]];
+    // vị trí giữa màn hình
+    const usableW = (oc.width - marginX*2)/sf;
+    const usableH = (oc.height - marginY*2)/sf;
+    const screenLeft = outerPad + (W - outerPad*2 - usableW)/2;
+    const screenTop  = (H - usableH)/2;
+
+    state.textAssist = {
+      canvas: oc,
+      sx: marginX, sy: marginY,
+      sw: oc.width - marginX*2,
+      sh: oc.height - marginY*2,
+      dx: screenLeft,
+      dy: screenTop,
+      dw: usableW,
+      dh: usableH,
+      appearAt: performance.now() / 1000
+    };
+
+    // sinh mục tiêu hạt
+    const pts = [];
+    function addPoint(px, py){
+      const x = Math.min(W-2, Math.max(1, px));
+      const y = Math.min(H-2, Math.max(1, py));
+      pts.push({x, y});
     }
+    for (let y=0; y<oc.height; y+=step){
+      for (let x=0; x<oc.width; x+=step){
+        const a = img[(y*oc.width + x)*4 + 3];
+        if (a>32){
+          const gx = screenLeft + (x - marginX)/sf;
+          const gy = screenTop  + (y - marginY)/sf;
+          addPoint(gx, gy);
+          addPoint(gx+0.6, gy);
+        }
+      }
+    }
+    if (pts.length > cfg.countMax){
+      const ratio = cfg.countMax / pts.length;
+      const compact = [];
+      let acc = 0;
+      for (let i=0;i<pts.length;i++){
+        acc += ratio;
+        if (acc >= 1){ compact.push(pts[i]); acc -= 1; }
+      }
+      shuffle(compact);
+      return compact;
+    }
+    shuffle(pts);
     return pts;
   }
 
-  // ======================= PHẦN TỬ HẠT =======================
-  function makeParticle() {
-    return {
-      x: Math.random() * window.innerWidth,
-      y: Math.random() * window.innerHeight,
-      startX: 0, startY: 0,
-      targetX: 0, targetY: 0
-    };
+  function shuffle(arr){
+    for (let i=arr.length-1;i>0;i--){
+      const j = (Math.random()*(i+1))|0;
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+    }
   }
 
-  function scatter(reset = false) {
-    const need = targets.length - particles.length;
-    for (let i = 0; i < need; i++) particles.push(makeParticle());
-    if (particles.length > targets.length) particles.length = targets.length;
-
-    particles.forEach((p, i) => {
-      if (reset) {
-        p.x = Math.random() * window.innerWidth;
-        p.y = window.innerHeight + Math.random() * 80;
-      }
-      p.startX = p.x; p.startY = p.y;
-      const tgt = targets[i];
-      if (tgt) { p.targetX = tgt.x; p.targetY = tgt.y; }
-    });
-
-    state.mode = "form";
-    state.timer = 0;
-    state.transitionProgress = 0;
-  }
-
-  // ======================= CHU TRÌNH =======================
-  function currentTargetBuilder() {
+  // ================= Scenes =================
+  function currentTargetBuilder(){
     if (cfg.cycleIndex === 0) return buildHeart();
     if (cfg.cycleIndex === 1) return buildText("LÀM NGƯỜI YÊU ANH NHÉ");
     if (cfg.cycleIndex === 2) return buildText("KHÁNH HÒA");
@@ -238,130 +289,195 @@
     if (cfg.cycleIndex === 6) return buildText("ANH YÊU EM");
     return buildHeart();
   }
-
-  function nextPhase() {
+  function nextPhase(){
     cfg.cycleIndex = (cfg.cycleIndex + 1) % 8;
     nextTargets = currentTargetBuilder();
-
     state.mode = "transition_out";
     state.timer = 0;
-    state.transitionProgress = 0;
-
-    particles.forEach(p => { p.startX = p.x; p.startY = p.y; });
+    particles.forEach(p=>{ p.startX=p.x; p.startY=p.y; });
   }
 
-  // ======================= LOOP =======================
+  // ================= Heartbeat =================
+  function heartbeat(t, bpm){
+    const phase = (t * bpm / 60) % 1;
+    const g = (x, mu, w) => Math.exp(-0.5 * Math.pow((x-mu)/w, 2));
+    const a = 1.00 * g(phase, 0.10, 0.035) + 0.85 * g(phase, 0.32, 0.050);
+    return Math.min(1, a * 1.2);
+  }
+  function pulseShift(t, amp, m){
+    const base = m * amp;
+    return { x: base * Math.sin(t * 14.0), y: base * 0.6 * Math.cos(t * 11.3) };
+  }
+  const easeOut = (x)=>1-Math.pow(1-x,2);
+
+  // ================= Loop =================
   let last = performance.now();
-  function tick(now) {
-    const dt = Math.min(0.033, (now - last) / 1000);
+  function tick(now){
+    const dt = Math.min(0.033, (now-last)/1000);
     last = now;
 
-    rctx.clearRect(0, 0, W, H);
-    rainCols.forEach((c) => { c.step(dt); c.draw(rctx, now / 1000); });
+    rctx.clearRect(0,0,W,H);
+    rainCols.forEach(c=>{ c.step(dt); c.draw(rctx, now/1000); });
 
-    pctx.clearRect(0, 0, W, H);
+    pctx.clearRect(0,0,W,H);
     stepParticles(dt);
-    drawParticles();
+    drawParticles(now/1000);
 
     requestAnimationFrame(tick);
   }
 
-  function stepParticles(dt) {
-    if (state.mode === "form") {
+  function stepParticles(dt){
+    if (state.mode === "form"){
       state.timer += dt;
       const t = Math.min(1, state.timer / cfg.formTime);
-      const ease = 1 - Math.pow(1 - t, 3);
-      particles.forEach((p, i) => {
-        const tgt = targets[i];
-        if (!tgt) return;
-        p.x = p.startX + (tgt.x - p.startX) * ease;
-        p.y = p.startY + (tgt.y - p.startY) * ease;
+      const e = 1 - Math.pow(1-t,3);
+      particles.forEach((p,i)=>{
+        const tgt = targets[i]; if (!tgt) return;
+        p.x = p.startX + (tgt.x - p.startX)*e;
+        p.y = p.startY + (tgt.y - p.startY)*e;
       });
-      if (t >= 1) { state.mode = "stable"; state.timer = 0; }
+      if (t>=1){ state.mode="stable"; state.timer=0; }
       return;
     }
-
-    if (state.mode === "stable") {
+    if (state.mode === "stable"){
       state.timer += dt;
-      if (state.timer > 3.2) nextPhase();
+      if (state.timer > cfg.stableTime) nextPhase();
       return;
     }
-
-    if (state.mode === "transition_out") {
+    if (state.mode === "transition_out"){
       state.timer += dt;
-      state.transitionProgress = Math.min(1, state.timer / 1.1);
-      const k = state.transitionProgress;
-      particles.forEach((p) => {
-        const cx = window.innerWidth/2, cy = window.innerHeight/2;
-        const dx = p.x - cx, dy = p.y - cy;
-        const dist = Math.hypot(dx, dy);
-        const ang  = Math.atan2(dy, dx);
-        const nd = dist + k * 60;
-        p.x = cx + Math.cos(ang) * nd;
-        p.y = cy + Math.sin(ang) * nd;
-      });
-
-      if (k >= 1) {
-        targets = nextTargets;
-        state.mode = "transition_in";
-        state.timer = 0;
-        state.transitionProgress = 0;
-        particles.forEach((p, i) => {
-          p.startX = p.x; p.startY = p.y;
-          const tgt = targets[i];
-          if (tgt) { p.targetX = tgt.x; p.targetY = tgt.y; }
+      const k = Math.min(1, state.timer/1.2); // chậm ra cảnh
+      const cx=W/2, cy=H/2;
+      particles.forEach(p=>{ p.x += (cx - p.x)*(0.25+0.75*k); p.y += (cy - p.y)*(0.25+0.75*k); });
+      if (k>=1){
+        particles.forEach((p,i)=>{
+          p.startX = p.x = Math.random()*W;
+          p.startY = p.y = H + Math.random()*100;
+          const tgt = nextTargets[i];
+          if (tgt){ p.targetX=tgt.x; p.targetY=tgt.y; }
         });
+        targets = nextTargets;
+        state.mode = "transition_in"; state.timer=0;
       }
       return;
     }
-
-    if (state.mode === "transition_in") {
+    if (state.mode === "transition_in"){
       state.timer += dt;
-      state.transitionProgress = Math.min(1, state.timer / 1.2);
-      const e = 1 - Math.pow(1 - state.transitionProgress, 3);
-      particles.forEach((p) => {
-        p.x = p.startX + (p.targetX - p.startX) * e;
-        p.y = p.startY + (p.targetY - p.startY) * e;
+      const t = Math.min(1, state.timer/1.3); // vào cảnh chậm hơn
+      const e = 1 - Math.pow(1-t,3);
+      particles.forEach(p=>{
+        p.x = p.startX + (p.targetX - p.startX)*e;
+        p.y = p.startY + (p.targetY - p.startY)*e;
       });
-      if (state.transitionProgress >= 1) { state.mode = "stable"; state.timer = 0; }
+      if (t>=1){ state.mode="stable"; state.timer=0; }
     }
   }
 
-  // THAY ĐỔI: tăng kích thước hạt từ 1x1 → 2x2
-  function drawParticles() {
+  function drawParticles(t){
+    const cx = W/2, cy = H/2;
+    const isText = !!state.textAssist;
+
+    const mHeart = heartbeat(t, cfg.heartBpm);
+    const mText  = heartbeat(t, cfg.textBpm);
+
+    const shift = isText
+      ? pulseShift(t, cfg.textPulseAmp,  mText)
+      : pulseShift(t, cfg.heartPulseAmp, mHeart);
+
+    const scale = isText
+      ? (1 + cfg.textScale  * mText)
+      : (1 + cfg.heartScale * mHeart);
+
     pctx.save();
-    pctx.globalAlpha = 1;
-    pctx.shadowColor = "transparent";
-    pctx.shadowBlur = 0;
-    pctx.imageSmoothingEnabled = false;
-    pctx.fillStyle = "#ffffff";
-    for (let i = 0; i < particles.length; i++) {
-      const x = Math.round(particles[i].x);
-      const y = Math.round(particles[i].y);
-      pctx.fillRect(x, y, 2, 2); // TĂNG từ 1,1 → 2,2
+    pctx.setTransform(DPR,0,0,DPR,0,0);
+    pctx.translate(cx + shift.x, cy + shift.y);
+    pctx.scale(scale, scale);
+    pctx.translate(-cx, -cy);
+
+    // ===== Lớp chữ nét (màu hồng + xuất hiện) =====
+    if (state.textAssist){
+      const ta = state.textAssist;
+      const elapsed = Math.max(0, t - ta.appearAt);
+      const raw = Math.min(1, elapsed / cfg.textAppearDur);
+      const alpha = cfg.textAssistAlpha * (0.3 + 0.7 * easeOut(raw));
+      const blur = (1 - easeOut(raw)) * cfg.textAppearMaxBlur;
+
+      pctx.save();
+      pctx.globalAlpha = alpha;
+      pctx.filter = `blur(${blur}px)`;
+
+      if (cfg.textAppearStyle === "fade"){
+        pctx.drawImage(ta.canvas, ta.sx, ta.sy, ta.sw, ta.sh, ta.dx, ta.dy, ta.dw, ta.dh);
+      } else if (cfg.textAppearStyle === "scale"){
+        const pivotX = ta.dx + ta.dw/2;
+        const pivotY = ta.dy + ta.dh/2;
+        const s = 0.94 + 0.06*easeOut(raw);
+        pctx.translate(pivotX, pivotY);
+        pctx.scale(s, s);
+        pctx.translate(-pivotX, -pivotY);
+        pctx.drawImage(ta.canvas, ta.sx, ta.sy, ta.sw, ta.sh, ta.dx, ta.dy, ta.dw, ta.dh);
+      } else { // wipe
+        let left = ta.dx, right = ta.dx + ta.dw;
+        if (cfg.textAppearFrom === "left"){
+          right = ta.dx + ta.dw * easeOut(raw);
+        } else if (cfg.textAppearFrom === "right"){
+          left  = ta.dx + ta.dw * (1 - easeOut(raw));
+        } else { // center
+          const half = ta.dw * easeOut(raw) / 2;
+          left  = ta.dx + ta.dw/2 - half;
+          right = ta.dx + ta.dw/2 + half;
+        }
+        pctx.save();
+        pctx.beginPath();
+        pctx.rect(left, ta.dy, Math.max(0, right-left), ta.dh);
+        pctx.clip();
+        pctx.drawImage(ta.canvas, ta.sx, ta.sy, ta.sw, ta.sh, ta.dx, ta.dy, ta.dw, ta.dh);
+        pctx.restore();
+      }
+      pctx.filter = "none";
+      pctx.restore();
     }
+
+    // ===== Hạt (hồng + glow nhẹ) =====
+    pctx.fillStyle = cfg.colors.particle;
+    if (cfg.colors.particleGlow > 0) {
+      pctx.shadowColor = cfg.colors.particle;
+      pctx.shadowBlur = cfg.colors.particleGlow;
+    }
+    const r = cfg.dotSize / 2;
+    for (let i=0;i<particles.length;i++){
+      const x = particles[i].x, y = particles[i].y;
+      pctx.beginPath();
+      pctx.arc(x, y, r, 0, Math.PI*2);
+      pctx.fill();
+    }
+    pctx.shadowBlur = 0; // tắt shadow
+
     pctx.restore();
   }
 
-  // ======================= Resize & Khởi tạo =======================
-  function resize() {
-    W = rain.width = prt.width = Math.floor(window.innerWidth * DPR);
-    H = rain.height = prt.height = Math.floor(window.innerHeight * DPR);
+  // ================= Init / Resize =================
+  function resize(){
+    W = Math.floor(window.innerWidth);
+    H = Math.floor(window.innerHeight);
 
-    rain.style.width = prt.style.width = window.innerWidth + "px";
-    rain.style.height = prt.style.height = window.innerHeight + "px";
+    rain.width  = Math.floor(W * DPR);
+    rain.height = Math.floor(H * DPR);
+    prt.width   = Math.floor(W * DPR);
+    prt.height  = Math.floor(H * DPR);
 
-    rctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    pctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    rain.style.width = prt.style.width = W + "px";
+    rain.style.height = prt.style.height = H + "px";
+
+    rctx.setTransform(DPR,0,0,DPR,0,0);
+    pctx.setTransform(DPR,0,0,DPR,0,0);
 
     rebuildRain();
-
     targets = currentTargetBuilder();
     scatter(false);
   }
 
   window.addEventListener("resize", resize);
-
   resize();
   requestAnimationFrame(tick);
 })();

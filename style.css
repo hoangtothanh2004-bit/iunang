@@ -6,6 +6,8 @@ html, body {
   background: #000;
   overflow: hidden;
   font-family: "Times New Roman", Georgia, serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #rain, #particles {
